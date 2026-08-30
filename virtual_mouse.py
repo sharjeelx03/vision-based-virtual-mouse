@@ -5,7 +5,8 @@ Real-time hand-tracking virtual mouse using MediaPipe, OpenCV, and PyAutoGUI.
 
 Architecture
 ------------
-• HandDetector  – wraps MediaPipe Hands; returns landmark positions.
+• HandDetector  – wraps MediaPipe Tasks HandLandmarker; returns landmark
+                  positions in pixel space.
 • VirtualMouse  – main loop: reads frames, maps coordinates, moves cursor,
                   detects clicks, draws overlays.
 
@@ -14,17 +15,37 @@ Performance target: ≥ 30 FPS on an Intel i7 with a 640×480 webcam feed.
 Author : Sharj
 Date   : 2026-08-30
 Python : 3.10+
+
+Requires
+--------
+• mediapipe >= 1.0
+• opencv-python >= 5.0
+• pyautogui
+• numpy
+• hand_landmarker.task model file (auto-detected in script directory)
 """
 
 from __future__ import annotations
 
+import os
+import sys
 import time
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import cv2
 import numpy as np
 import mediapipe as mp
+from mediapipe.tasks.python import BaseOptions
+from mediapipe.tasks.python.vision import (
+    HandLandmarker,
+    HandLandmarkerOptions,
+    HandLandmarkerResult,
+    HandLandmarksConnections,
+    RunningMode,
+    drawing_utils,
+    drawing_styles,
+)
 import pyautogui
 
 
@@ -39,6 +60,9 @@ class Config:
     cam_width: int = 640                 # capture width  (px)
     cam_height: int = 480                # capture height (px)
     cam_index: int = 0                   # default webcam device id
+
+    # ── Model ────────────────────────────────────────────────────────
+    model_path: str = "hand_landmarker.task"  # MediaPipe Tasks model
 
     # ── Reduction box (margin from each edge of the frame) ──────────
     #    The user only needs to move their hand inside this smaller
@@ -66,40 +90,55 @@ class Config:
 
 
 # ──────────────────────────────────────────────────────────────────────
-#  HandDetector – thin wrapper around MediaPipe Hands
+#  HandDetector – wraps MediaPipe Tasks HandLandmarker (v1.0+ API)
 # ──────────────────────────────────────────────────────────────────────
 class HandDetector:
     """
     Detects a single hand and exposes pixel-space landmark positions.
 
-    MediaPipe returns *normalised* coordinates (0-1).  This class converts
-    them to pixel coordinates using the frame dimensions so the rest of
-    the pipeline works in a consistent integer pixel space.
+    MediaPipe Tasks returns *normalised* coordinates (0-1).  This class
+    converts them to pixel coordinates using the frame dimensions so the
+    rest of the pipeline works in a consistent integer pixel space.
+
+    Uses the synchronous VIDEO running mode which expects monotonically
+    increasing timestamps – perfect for a webcam loop.
     """
 
     # Landmark indices we care about (MediaPipe hand model)
     INDEX_TIP = 8    # tip of the index finger
     THUMB_TIP = 4    # tip of the thumb
 
-    def __init__(
-        self,
-        max_hands: int = 1,
-        detection_confidence: float = 0.75,
-        tracking_confidence: float = 0.75,
-    ) -> None:
-        self._mp_hands = mp.solutions.hands
-        self._mp_draw = mp.solutions.drawing_utils
-        self._mp_styles = mp.solutions.drawing_styles
+    def __init__(self, model_path: str, detection_confidence: float = 0.75,
+                 tracking_confidence: float = 0.75) -> None:
+        # Resolve model path relative to this script's directory.
+        if not os.path.isabs(model_path):
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            model_path = os.path.join(script_dir, model_path)
 
-        self._hands = self._mp_hands.Hands(
-            static_image_mode=False,
-            max_num_hands=max_hands,
-            min_detection_confidence=detection_confidence,
+        if not os.path.exists(model_path):
+            print(f"ERROR: Model file not found: {model_path}")
+            print("Download it with:")
+            print('  Invoke-WebRequest -Uri "https://storage.googleapis.com/'
+                  'mediapipe-models/hand_landmarker/hand_landmarker/float16/'
+                  'latest/hand_landmarker.task" -OutFile "hand_landmarker.task"')
+            sys.exit(1)
+
+        options = HandLandmarkerOptions(
+            base_options=BaseOptions(model_asset_path=model_path),
+            running_mode=RunningMode.VIDEO,
+            num_hands=1,
+            min_hand_detection_confidence=detection_confidence,
+            min_hand_presence_confidence=detection_confidence,
             min_tracking_confidence=tracking_confidence,
         )
 
-        # Cache the last result so the caller can draw later.
-        self._results = None
+        self._landmarker = HandLandmarker.create_from_options(options)
+
+        # Frame counter used as monotonic timestamp (milliseconds).
+        self._frame_ts_ms: int = 0
+
+        # Cache the last result for drawing.
+        self._last_result: HandLandmarkerResult | None = None
 
     # ── public API ───────────────────────────────────────────────────
 
@@ -114,14 +153,22 @@ class HandDetector:
             or an empty list if no hand is found.
         """
         h, w, _ = frame.shape
+
+        # Convert BGR → RGB and wrap in a MediaPipe Image.
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        self._results = self._hands.process(rgb)
+        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+
+        # Monotonically increasing timestamp required by VIDEO mode.
+        self._frame_ts_ms += 33  # ~30 FPS step
+        result = self._landmarker.detect_for_video(mp_image, self._frame_ts_ms)
+        self._last_result = result
 
         landmarks: list[tuple[int, int, int]] = []
 
-        if self._results.multi_hand_landmarks:
-            hand = self._results.multi_hand_landmarks[0]
-            for idx, lm in enumerate(hand.landmark):
+        if result.hand_landmarks:
+            # First detected hand's landmarks (normalised 0-1).
+            hand = result.hand_landmarks[0]
+            for idx, lm in enumerate(hand):
                 # Convert normalised (0-1) coords → pixel coords.
                 px, py = int(lm.x * w), int(lm.y * h)
                 landmarks.append((idx, px, py))
@@ -130,15 +177,17 @@ class HandDetector:
 
     def draw(self, frame: np.ndarray) -> None:
         """Draw MediaPipe hand skeleton on the frame (in-place)."""
-        if self._results and self._results.multi_hand_landmarks:
-            for hand_lms in self._results.multi_hand_landmarks:
-                self._mp_draw.draw_landmarks(
+        if self._last_result and self._last_result.hand_landmarks:
+            for hand_lms in self._last_result.hand_landmarks:
+                drawing_utils.draw_landmarks(
                     frame,
                     hand_lms,
-                    self._mp_hands.HAND_CONNECTIONS,
-                    self._mp_styles.get_default_hand_landmarks_style(),
-                    self._mp_styles.get_default_hand_connections_style(),
+                    HandLandmarksConnections.HAND_CONNECTIONS,
                 )
+
+    def close(self) -> None:
+        """Release MediaPipe resources."""
+        self._landmarker.close()
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -157,7 +206,11 @@ class VirtualMouse:
         self.scr_w, self.scr_h = pyautogui.size()
 
         # Initialise hand detector
-        self.detector = HandDetector()
+        self.detector = HandDetector(
+            model_path=self.cfg.model_path,
+            detection_confidence=0.75,
+            tracking_confidence=0.75,
+        )
 
         # ── Smoothing state ──────────────────────────────────────────
         #    We store the *previous* smoothed screen-space position.
@@ -339,10 +392,10 @@ class VirtualMouse:
                 f"Cannot open webcam (device index {self.cfg.cam_index})."
             )
 
-        print("──────────────────────────────────────────")
-        print("  Vision-Based Virtual Mouse — Running")
+        print("------------------------------------------")
+        print("  Vision-Based Virtual Mouse -- Running")
         print("  Press 'q' in the OpenCV window to quit.")
-        print("──────────────────────────────────────────")
+        print("------------------------------------------")
 
         try:
             while True:
@@ -351,7 +404,7 @@ class VirtualMouse:
                     break
 
                 # Mirror the frame so the cursor moves in the intuitive
-                # direction (move hand right → cursor goes right).
+                # direction (move hand right -> cursor goes right).
                 frame = cv2.flip(frame, 1)
 
                 # ── Hand detection ───────────────────────────────────
@@ -363,20 +416,26 @@ class VirtualMouse:
                     # Index finger tip position (pixel-space).
                     _, ix, iy = landmarks[HandDetector.INDEX_TIP]
 
-                    # Map cam coords → screen coords via the reduction box.
+                    # Map cam coords -> screen coords via the reduction box.
                     raw_sx, raw_sy = self._map_to_screen(ix, iy)
 
                     # Apply EMA smoothing to remove jitter.
                     smooth_sx, smooth_sy = self._smooth(raw_sx, raw_sy)
 
+                    # Clamp 2 px away from screen edges so normal hand
+                    # movement near the webcam border doesn't trigger
+                    # PyAutoGUI's corner failsafe.
+                    clamped_x = int(np.clip(smooth_sx, 2, self.scr_w - 3))
+                    clamped_y = int(np.clip(smooth_sy, 2, self.scr_h - 3))
+
                     # Move the OS cursor.
                     pyautogui.moveTo(
-                        int(smooth_sx),
-                        int(smooth_sy),
+                        clamped_x,
+                        clamped_y,
                         _pause=False,           # skip PyAutoGUI's built-in pause
                     )
 
-                    # Check for pinch → click.
+                    # Check for pinch -> click.
                     clicked = self._try_click(landmarks)
 
                 # ── Draw overlays ────────────────────────────────────
@@ -395,7 +454,12 @@ class VirtualMouse:
                 # 'q' to quit.
                 if cv2.waitKey(1) & 0xFF == ord("q"):
                     break
+
+        except pyautogui.FailSafeException:
+            print("\n[FAILSAFE] Physical mouse moved to a screen corner "
+                  "-- exiting safely.")
         finally:
+            self.detector.close()
             cap.release()
             cv2.destroyAllWindows()
 
