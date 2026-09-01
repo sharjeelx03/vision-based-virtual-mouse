@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="logo.png" alt="Virtual Mouse Logo" width="200">
+
 # ✋ Vision-Based Virtual Mouse
 
 **Control your computer with just your hand — no hardware needed.**
