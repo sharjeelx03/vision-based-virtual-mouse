@@ -36,3 +36,15 @@ desktop.ini
 # Temporary files
 *.tmp
 *.bak
+
+# Installer output
+installer/Output/
+
+# User settings (private)
+settings.json
+
+# MSIX / signing
+*.msix
+*.appx
+*.pfx
+*.cer

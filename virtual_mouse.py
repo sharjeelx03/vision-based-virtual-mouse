@@ -31,12 +31,15 @@ License: MIT
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 import time
 import math
-from dataclasses import dataclass
+import threading
+from dataclasses import dataclass, asdict, field
 from enum import Enum, auto
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -71,6 +74,11 @@ class Gesture(Enum):
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 #  Configuration
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ── Settings file path ───────────────────────────────────────────────
+SETTINGS_DIR = Path(os.environ.get("APPDATA", ".")) / "VirtualMouse"
+SETTINGS_FILE = SETTINGS_DIR / "settings.json"
+
+
 @dataclass
 class Config:
     """Every tunable parameter in one place."""
@@ -100,6 +108,42 @@ class Config:
     # ── Display ──────────────────────────────────────────────────────
     show_guide: bool = True           # show gesture guide panel
     mirror: bool = True               # mirror the webcam feed
+
+    # ── App behaviour ────────────────────────────────────────────────
+    start_tracking_on_launch: bool = True
+    minimize_to_tray: bool = True
+    start_with_windows: bool = False
+
+    # ── Serialisation ────────────────────────────────────────────────
+
+    def to_dict(self) -> dict:
+        """Return a JSON-safe dict of all settings."""
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "Config":
+        """Create a Config from a dict, ignoring unknown keys."""
+        valid = {f.name for f in cls.__dataclass_fields__.values()}
+        return cls(**{k: v for k, v in d.items() if k in valid})
+
+    def save(self, path: Path | None = None) -> None:
+        """Persist settings to a JSON file."""
+        p = path or SETTINGS_FILE
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with open(p, "w", encoding="utf-8") as f:
+            json.dump(self.to_dict(), f, indent=2)
+
+    @classmethod
+    def load(cls, path: Path | None = None) -> "Config":
+        """Load settings from JSON, falling back to defaults."""
+        p = path or SETTINGS_FILE
+        if p.exists():
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    return cls.from_dict(json.load(f))
+            except (json.JSONDecodeError, TypeError):
+                pass
+        return cls()
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -697,6 +741,10 @@ class VirtualMouse:
 
         self._prev_time: float = 0.0
 
+        # ── Threading control ────────────────────────────────────────
+        self._stop_event: threading.Event = threading.Event()
+        self._running: bool = False
+
     # ── coordinate mapping ───────────────────────────────────────────
 
     def _map_to_screen(self, x: int, y: int) -> tuple[float, float]:
@@ -838,18 +886,42 @@ class VirtualMouse:
             state = "PAUSED" if self._is_paused else "RESUMED"
             print(f"  [{state}]")
 
+    # ── external control ──────────────────────────────────────────────
+
+    @property
+    def is_running(self) -> bool:
+        """Whether the tracking loop is currently active."""
+        return self._running
+
+    def request_stop(self) -> None:
+        """Signal the run loop to stop (thread-safe)."""
+        self._stop_event.set()
+
     # ── main loop ────────────────────────────────────────────────────
 
-    def run(self) -> None:
-        """Start the virtual mouse.  Press 'q' to quit."""
+    def run(self, stop_event: threading.Event | None = None) -> None:
+        """
+        Start the virtual mouse.  Press 'q' to quit.
+
+        If *stop_event* is provided (e.g. from the tray app), the loop
+        will also exit when the event is set.
+        """
+        if stop_event is not None:
+            self._stop_event = stop_event
+        else:
+            self._stop_event.clear()
+
+        self._running = True
+
         cap = cv2.VideoCapture(self.cfg.cam_index)
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.cfg.cam_width)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.cfg.cam_height)
 
         if not cap.isOpened():
+            self._running = False
             print(f"\n  ERROR: Cannot open webcam (device {self.cfg.cam_index}).")
             print("  Try a different camera index with --cam 1\n")
-            sys.exit(1)
+            return
 
         print()
         print("  +=============================================+")
@@ -865,7 +937,7 @@ class VirtualMouse:
         fired_action = False
 
         try:
-            while True:
+            while not self._stop_event.is_set():
                 success, frame = cap.read()
                 if not success:
                     break
@@ -965,6 +1037,7 @@ class VirtualMouse:
         except KeyboardInterrupt:
             print("\n  [INTERRUPTED] Ctrl+C — exiting.\n")
         finally:
+            self._running = False
             self._do_drag_end()
             self.detector.close()
             cap.release()
