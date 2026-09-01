@@ -15,6 +15,19 @@ A real-time hand-tracking virtual mouse that turns your webcam into a touchless 
 
 ---
 
+## 📥 Download (Windows — No Python Required)
+
+If you just want to **use** the virtual mouse without installing Python:
+
+1. Go to the [**Releases**](https://github.com/sharjeelx03/vision-based-virtual-mouse/releases) page
+2. Download `VirtualMouse.zip` from the latest release
+3. Extract the ZIP file
+4. Run `VirtualMouse.exe`
+
+> **Note:** The `.exe` bundles everything — Python, OpenCV, MediaPipe — so it's a single portable folder. You still need a webcam and the `hand_landmarker.task` model file (included in the release ZIP).
+
+---
+
 ## ✨ Features
 
 - 🖱️ **7 Hand Gestures** — Move, left/right/double click, scroll, drag & drop, pause
@@ -41,26 +54,60 @@ A real-time hand-tracking virtual mouse that turns your webcam into a touchless 
 
 ---
 
-## 🚀 Quick Start
+## 🚀 Quick Start (Run from Source)
 
 ### Prerequisites
 
-- **Python 3.10** or higher
+- **Python 3.10** or higher — [Download Python](https://www.python.org/downloads/)
 - A **webcam** (built-in or USB)
+- **Git** — [Download Git](https://git-scm.com/downloads)
 - **Windows**, **macOS**, or **Linux**
 
-### Installation
+### Step 1 — Clone the Repository
+
+Open a terminal (Command Prompt, PowerShell, or Terminal) and run:
 
 ```bash
-# 1. Clone the repository
-git clone https://github.com/YOUR_USERNAME/vision-based-virtual-mouse.git
-cd vision-based-virtual-mouse
-
-# 2. Install dependencies
-pip install -r requirements.txt
-
-# 3. Download the hand tracking model (~7.8 MB)
+git clone https://github.com/sharjeelx03/vision-based-virtual-mouse.git
 ```
+
+Then navigate into the project folder:
+
+```bash
+cd vision-based-virtual-mouse
+```
+
+### Step 2 — Create a Virtual Environment (Recommended)
+
+<details>
+<summary><b>Windows (PowerShell / CMD)</b></summary>
+
+```powershell
+python -m venv venv
+venv\Scripts\activate
+```
+
+</details>
+
+<details>
+<summary><b>macOS / Linux</b></summary>
+
+```bash
+python3 -m venv venv
+source venv/bin/activate
+```
+
+</details>
+
+### Step 3 — Install Dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+### Step 4 — Download the Hand Tracking Model
+
+The app needs a MediaPipe model file (~7.8 MB). Download it into the project folder:
 
 **Windows (PowerShell):**
 ```powershell
@@ -72,7 +119,7 @@ Invoke-WebRequest -Uri "https://storage.googleapis.com/mediapipe-models/hand_lan
 curl -L -o hand_landmarker.task "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task"
 ```
 
-### Run
+### Step 5 — Run the Virtual Mouse
 
 ```bash
 python virtual_mouse.py
@@ -152,12 +199,45 @@ smoothed_t = α × raw_t + (1 − α) × smoothed_{t−1}
 
 ---
 
+## 🔨 Building the Windows EXE
+
+Want to build the `.exe` yourself? Here's how:
+
+### Prerequisites
+
+- All the [Quick Start](#-quick-start-run-from-source) setup steps completed
+- PyInstaller installed:
+
+```bash
+pip install pyinstaller
+```
+
+### Build
+
+Run the included build script:
+
+```powershell
+python build_exe.py
+```
+
+Or build manually with PyInstaller:
+
+```powershell
+pyinstaller --name VirtualMouse --onedir --noconsole --icon=NONE --add-data "hand_landmarker.task;." virtual_mouse.py
+```
+
+The built executable will be in the `dist/VirtualMouse/` folder.
+
+> **Tip:** The `--onedir` mode creates a folder with the `.exe` + dependencies. This is faster to build and launch than `--onefile`.
+
+---
+
 ## 🔧 Troubleshooting
 
 <details>
 <summary><b>❌ "Model file not found" error</b></summary>
 
-Download the model file — see [Installation](#installation) step 3.
+Download the model file — see [Step 4](#step-4--download-the-hand-tracking-model) in Quick Start.
 </details>
 
 <details>
@@ -204,6 +284,30 @@ python virtual_mouse.py --sensitivity 30
 - Ensure you're not running in a virtual machine
 </details>
 
+<details>
+<summary><b>❌ EXE build fails</b></summary>
+
+- Make sure you're in the activated virtual environment
+- Run `pip install pyinstaller` again
+- Check that `hand_landmarker.task` exists in the project folder
+- Try: `pip install --upgrade pyinstaller`
+</details>
+
+---
+
+## 📁 Project Structure
+
+```
+vision-based-virtual-mouse/
+├── virtual_mouse.py         # Main application (all-in-one)
+├── build_exe.py             # Build script for Windows EXE
+├── requirements.txt         # Python dependencies
+├── hand_landmarker.task     # MediaPipe hand model (downloaded separately)
+├── LICENSE                  # MIT License
+├── .gitignore               # Git ignore rules
+└── README.md                # This file
+```
+
 ---
 
 ## 🤝 Contributing
@@ -246,6 +350,6 @@ This project is licensed under the **MIT License** — see the [LICENSE](LICENSE
 
 **⭐ If you found this useful, please give it a star!**
 
-Made with ❤️ and 🤖
+Made with ❤️ by [Sharjeel](https://github.com/sharjeelx03)
 
 </div>
