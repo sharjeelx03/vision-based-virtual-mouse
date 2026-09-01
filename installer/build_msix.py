@@ -128,22 +128,8 @@ def create_staging() -> None:
 
     print(f"\n  --> Copying application files...")
 
-    # Copy all PyInstaller output
-    shutil.copytree(DIST_DIR, STAGING_DIR / APP_NAME, dirs_exist_ok=True)
-
-    # Move files from subfolder to root (MSIX expects flat structure for EXE)
-    # Actually, keep the structure — the EXE at root level
-    # Move everything from the subfolder to staging root
-    src_dir = STAGING_DIR / APP_NAME
-    for item in src_dir.iterdir():
-        dest = STAGING_DIR / item.name
-        if dest.exists():
-            if dest.is_dir():
-                shutil.rmtree(dest)
-            else:
-                dest.unlink()
-        shutil.move(str(item), str(dest))
-    src_dir.rmdir()
+    # Copy all PyInstaller output directly to staging root
+    shutil.copytree(DIST_DIR, STAGING_DIR, dirs_exist_ok=True)
 
     print(f"  --> Copying manifest...")
     shutil.copy2(MANIFEST_TEMPLATE, STAGING_DIR / "AppxManifest.xml")

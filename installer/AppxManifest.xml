@@ -19,7 +19,7 @@
 
   <Identity
     Name="Sharjeel.VirtualMouse"
-    Publisher="CN=INSERT-YOUR-PUBLISHER-ID"
+    Publisher="CN=Xyphron"
     Version="2.0.0.0"
     ProcessorArchitecture="x64" />
 
