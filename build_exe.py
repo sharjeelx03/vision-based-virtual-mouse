@@ -59,12 +59,23 @@ def install_pyinstaller() -> None:
         print("  [OK] PyInstaller installed")
 
 
+def _on_rm_error(func, path, exc_info):
+    """Handle permission errors during rmtree on Windows."""
+    import stat
+    os.chmod(path, stat.S_IWRITE)
+    func(path)
+
+
 def clean_previous_build() -> None:
     """Remove previous build artifacts."""
     for folder in [BUILD_DIR, os.path.join(DIST_DIR, APP_NAME)]:
         if os.path.exists(folder):
             print(f"  --> Cleaning {folder}/")
-            shutil.rmtree(folder)
+            try:
+                shutil.rmtree(folder, onexc=lambda fn, p, e: _on_rm_error(fn, p, e))
+            except Exception:
+                print(f"  [WARN] Could not fully clean {folder}/ (files may be locked)")
+                print(f"         Close any running VirtualMouse.exe and try again.")
     # Remove .spec if it exists
     spec_file = f"{APP_NAME}.spec"
     if os.path.exists(spec_file):
@@ -85,6 +96,17 @@ def build() -> bool:
         "--noconfirm",
         # Bundle the model file next to the EXE
         "--add-data", f"{model_path};.",
+        # MediaPipe has compiled C extensions that PyInstaller can't auto-detect
+        "--collect-all", "mediapipe",
+        "--hidden-import", "mediapipe",
+        "--hidden-import", "mediapipe.tasks",
+        "--hidden-import", "mediapipe.tasks.c",
+        "--hidden-import", "mediapipe.tasks.cc",
+        "--hidden-import", "mediapipe.tasks.python",
+        "--hidden-import", "mediapipe.tasks.python.vision",
+        "--hidden-import", "mediapipe.tasks.python.core",
+        # Numpy OpenBLAS binaries
+        "--collect-data", "numpy",
         main_script,
     ]
 
