@@ -19,7 +19,7 @@ import subprocess
 
 # ── Configuration ────────────────────────────────────────────────────
 APP_NAME = "VirtualMouse"
-MAIN_SCRIPT = "virtual_mouse.py"
+MAIN_SCRIPT = "tray_app.py"
 MODEL_FILE = "hand_landmarker.task"
 DIST_DIR = "dist"
 BUILD_DIR = "build"
@@ -105,6 +105,11 @@ def build() -> bool:
         "--hidden-import", "mediapipe.tasks.python",
         "--hidden-import", "mediapipe.tasks.python.vision",
         "--hidden-import", "mediapipe.tasks.python.core",
+        # App modules
+        "--hidden-import", "virtual_mouse",
+        "--hidden-import", "settings_ui",
+        "--hidden-import", "pystray",
+        "--hidden-import", "pystray._win32",
         # Numpy OpenBLAS binaries
         "--collect-data", "numpy",
         main_script,
