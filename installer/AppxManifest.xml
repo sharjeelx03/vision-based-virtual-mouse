@@ -25,7 +25,7 @@
 
   <Properties>
     <DisplayName>Virtual Mouse</DisplayName>
-    <PublisherDisplayName>Sharjeel</PublisherDisplayName>
+    <PublisherDisplayName>Xyphron</PublisherDisplayName>
     <Logo>Assets\StoreLogo.png</Logo>
     <Description>Control your computer cursor with hand gestures using your webcam. No hardware needed — just your hands and AI.</Description>
   </Properties>
